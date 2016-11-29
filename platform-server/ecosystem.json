@@ -1,0 +1,38 @@
+{
+  "apps": [{
+    "name": "platform",
+    "script": "app.js",
+    "env": {
+      "COMMON_VARIABLE": "true"
+    },
+    "env_production": {
+      "NODE_ENV": "production"
+    }
+  }],
+  "deploy": {
+    "production": {
+      "user": "bluelight598",
+      "host": ["线上服务器IP地址或者host"],
+      "ref": "origin/master",
+      "repo": "git@github.com:bluelight598/nodePlatform.git",
+      "ssh_options": "StrictHostKeyChecking=no",
+      "path": "/opt/platform",
+      "post-deploy": "npm install && webpack --config webpack.config.js -p && PM2_HOME='/opt/platform/.pm2' pm2 startOrRestart ecosystem.json --env production",
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "daily": {
+      "user": "bluelight598",
+      "host": ["日常服务器IP地址或者host"],
+      "ref": "origin/master",
+      "repo": "git@github.com:bluelight598/nodePlatform.git",
+      "path": "/opt/platform",
+      "post-deploy": "npm install && webpack --config webpack.config.js -p && PM2_HOME='/opt/platformdev/.pm2' pm2 startOrRestart ecosystem.json --env daily",
+      "env": {
+        "NODE_ENV": "daily"
+      }
+    }
+  }
+}
+

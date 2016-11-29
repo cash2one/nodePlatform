@@ -1,0 +1,14 @@
+.idea/
+node_modules/
+build/
+npm-debug.log
+.DS_Store
+sources/*
+logs/*
+public/package/android/*
+public/package/ios/*
+public/package/unknown/*
+.project
+bundle.js
+*.css
+

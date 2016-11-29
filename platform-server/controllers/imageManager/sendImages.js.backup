@@ -1,0 +1,138 @@
+'use strict';
+
+// 本地图片解析返回,引入fastdfs后失效
+
+var path = require('path');
+var fs = require('fs');
+var co = require('co');
+var gm = require('gm').subClass({
+	imageMagick: true
+}); //默认的情况下 gm使用的是另外一个图片处理程序
+var logManager = require('../../dal/logger');
+var log = logManager.getLogger('imageService');
+
+module.exports = function(app) {
+	var config = app.get('read');
+	var targetDir = app.get('targetDir');
+	var contentTypes = app.get('contentType');
+
+	function sendFile(folders, req, res) {
+		var filename = req.params.filename;
+		var username = req.session.accessToken.name;
+		var ext = path.extname(filename).substr(1).toLowerCase();
+		if (!contentTypes[ext]) { // 如果不支持当前contentType则返回默认图片
+			return res.sendFile(getFilePath());
+		}
+
+		folders.push(filename);
+
+		if (ext == 'apk' || ext == 'ipa' || ext == 'plist') { // 如果是安装包类型，直接返回安装包
+			return res.sendFile(getFilePath(path.join.apply(path, folders)));
+		} else {
+			var filePath = getFilePath(path.join.apply(path, folders));
+
+			var resize = filePath.match(config.fixSizeReg);
+			var quality = null;
+			if (resize) { // 发现resize参数,参数将自动转换为10的倍数
+				var suffix = '.' + filePath.split('.').pop(); // 文件后缀名
+				var fixSize = Number((Number(resize[2]) / 10).toString().split('.')[0] + '0');
+				quality = resize[3] && Number(resize[3].split('q')[1]);
+				var newSuffix = '-';
+				if (fixSize) {
+					newSuffix = newSuffix + fixSize;
+				}
+				if (quality && quality > 0 && quality < 100) {
+					quality = Number((Number(quality) / 10).toString().split('.')[0] + '0');
+					newSuffix = newSuffix + 'q' + quality + suffix;
+				} else {
+					newSuffix = newSuffix + suffix;
+					quality = 100;
+				}
+				var filePath = filePath.replace(/-(\d*)(q\d+)*\.[a-zA-Z]+/, newSuffix);
+			}
+
+			fs.exists(filePath, function(exists) {
+				var writeFilePath = filePath;
+				//判断请求图片是否存在
+				if (exists) {
+					return res.sendFile(filePath);
+				}
+				var groups = filename.match(config.sizeReg);
+				if (!groups) {
+					return res.sendFile(getFilePath());
+				}
+
+				folders[folders.length - 1] = groups[1] + "." + groups[2];
+				var originFilePath = getFilePath(path.join.apply(path, folders)); // 拼接原图路径
+				var maxWH = parseInt(groups[3]); // 最大宽高
+				if (maxWH % 10 != 0) { // 非10的倍数,只生成10的倍数的尺寸图片,防止浪费
+					var newMaxWH = Number((maxWH / 10).toString().split('.')[0] + '0'); // 个位自动变0。
+					writeFilePath = writeFilePath.replace(maxWH, newMaxWH);
+					maxWH = newMaxWH;
+				}
+				maxWH = maxWH <= 0 ? 10 : maxWH;
+				//判断原始图是否存在     
+				fs.exists(originFilePath, function(exists) {
+					if (!exists) { // 不存在则加载默认图片default.jpg
+						res.send('文件' + originFilePath + '不存在');
+						originFilePath = getFilePath();
+						return false;
+					} else {
+						var resizeImg = function(done) {
+							var gM = gm(originFilePath);
+							gM
+								.resize(maxWH, maxWH)
+								.quality(quality)
+								.toBuffer(function(err, buffer) {
+									if (err) {
+										log.error('[sendFile:resizeImg:toBuffer:error] [用户\u0001' + username + '\u0001,tobuffer错误\u0001' + JSON.stringify(err) + '\u0001] [controllers/sendImages.js at line 85]');
+										return res.sendFile(getFilePath());
+									}
+									res.set('Content-Type', contentTypes[ext]);
+									res.send(buffer);
+								})
+								.resize(maxWH, maxWH)
+								.write(writeFilePath, function(err) {
+									log.debug('[sendFile:resizeImg:write:success] [用户\u0001' + username + '\u0001,resize成功！新图片url:\u0001' + writeFilePath + '\u0001]');
+									if (err) {
+										log.error('[sendFile:resizeImg:write:error] [用户\u0001' + username + '\u0001,resize写操作错误\u0001' + JSON.stringify(err) + '\u0001] [controllers/sendImages.js at line 95]');
+										done(null, {
+											success: false,
+											err: err
+										})
+									} else {
+										done(null, {
+											success: true,
+											err: false
+										})
+									}
+								});
+						}
+						var resizeGenerator = co.wrap(function*() {
+							yield resizeImg;
+						});
+						resizeGenerator();
+					}
+				});
+			});
+		}
+	}
+
+	function getFilePath(filename) {
+		return path.join(app.get('targetDir'), filename || config.default);
+	}
+
+	var sendImages = {
+		firstPath: function(req, res, next) { // 一级目录
+			sendFile([], req, res);
+		},
+		secondPath: function(req, res, next) { // 二级目录
+			sendFile([req.params.folder], req, res);
+		},
+		thirdPath: function(req, res, next) { // 三级目录
+			sendFile([req.params.folder1, req.params.folder2], req, res);
+
+		}
+	};
+	return sendImages;
+};
